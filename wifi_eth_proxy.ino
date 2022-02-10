@@ -23,7 +23,6 @@ int status = WL_IDLE_STATUS;     // the WiFi radio's status
 byte mac[] = {
   0xA8, 0x61, 0x0A, 0xAE, 0x89, 0x1D
 };
-char req[256];
 
 // Static IP & DNS configuration for Wifi.
 IPAddress wifiIP(192, 168, 0, 15);
@@ -66,6 +65,8 @@ void setupWifi() {
     while (true);
   }
 
+  //  WiFi.setTimeout(120 * 1000);
+
   String fv = WiFi.firmwareVersion();
   if (fv < WIFI_FIRMWARE_LATEST_VERSION) {
     Serial.println("Please upgrade the firmware");
@@ -84,7 +85,7 @@ void setupWifi() {
     delay(10000);
   }
 
-  Serial.print("Connected to wireless");
+  Serial.println("Connected to wireless");
   printCurrentNet();
   printWifiData();
 }
@@ -111,11 +112,28 @@ void setupEthernet() {
 }
 
 void loop() {
+  if (WiFi.status() == WL_DISCONNECTED || WiFi.status() == WL_CONNECTION_LOST)
+  {
+    // attempt to connect to WiFi network:
+    while (WiFi.status() != WL_CONNECTED) {
+      Serial.print("\nReconnecting to  SSID: ");
+      Serial.println(ssid);
+      // Connect to WPA/WPA2 network:
+      WiFi.config(wifiIP, wifiDNS);
+      status = WiFi.begin(ssid, pass);
+
+      // wait 10 seconds for connection:
+      delay(10000);
+    }
+    Serial.println("Connected to wireless");
+    printWifiData();
+  }
+
   // listen for incoming clients
   WiFiClient wClient = wServer.available();
   if (wClient) {
+    char req[256];
     int i = 0;
-    //    Serial.println("new client");
 
     // Need to read first line of HTTP request to forward to ethernet.
     while (wClient.connected()) {
@@ -136,12 +154,18 @@ void loop() {
       }
     }
 
-    Serial.println("\nRequest:");
-    Serial.write(req);
+    String reqS = String(req);
+    if (!reqS.startsWith("GET")) {
+      // No need to process additional lines of header.
+      return;
+    } else {
+      Serial.print("\nRequest:");
+      Serial.write(req); // Note: ends with new line.
 
-    Serial.print("Connecting to ");
-    Serial.print(serverIP);
-    Serial.print(" ... ");
+      Serial.print("Connecting to ");
+      Serial.print(serverIP);
+      Serial.print(" ... ");
+    }
 
     // Connection succeeded
     if (eClient.connect(serverIP, 80)) {
@@ -162,11 +186,14 @@ void loop() {
     }
 
     Serial.println("Got response!");
+    int bytes = 0;
     do {
       // Read response into 1kb buffer and relay to wireless client.
       int len = eClient.available();
       byte buffer[1024];
       if (len > 1024) len = 1024;
+      bytes += len;
+
       eClient.read(buffer, len);
       wClient.write(buffer, len);
 
@@ -176,10 +203,9 @@ void loop() {
       }
       // Continue to loop until no bytes left on ethernet connection.
     } while (eClient.available());
-
-    // close the connection:
-    wClient.stop();
-    //    Serial.println("client disconnected");
+    double kbytes = bytes / 1024.0;
+    Serial.print(kbytes);
+    Serial.println(" kiB transmitted");
   }
 }
 
