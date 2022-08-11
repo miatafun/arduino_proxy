@@ -23,6 +23,9 @@ int status = WL_IDLE_STATUS;     // the WiFi radio's status
 byte mac[] = {
   0xA8, 0x61, 0x0A, 0xAE, 0x89, 0x1D
 };
+int requestCount = 0;
+const int bufferSize = 4096;
+const int requestsBeforeReset = 48;
 
 // Static IP & DNS configuration for Wifi.
 IPAddress wifiIP(192, 168, 0, 15);
@@ -37,6 +40,8 @@ WiFiServer wServer(80);
 // Ethernet client for outgoing requests.
 EthernetClient eClient;
 
+void(* resetFunc) (void) = 0; // create a standard reset function
+
 void setup() {
   // Configure CS pin for ethernet shield
   Ethernet.init(10);
@@ -47,11 +52,17 @@ void setup() {
     ; // wait for serial port to connect. Needed for native USB port only
   }
 
+  display_freeram();
+
   setupWifi();
+
+  display_freeram();
 
   setupEthernet();
 
-  Serial.println("\n*****************************\n");
+  Serial.println(F("\n*****************************\n"));
+
+  display_freeram();
 
   // Start webserver
   wServer.begin();
@@ -60,7 +71,7 @@ void setup() {
 void setupWifi() {
   // check for the WiFi module:
   if (WiFi.status() == WL_NO_MODULE) {
-    Serial.println("Communication with WiFi module failed!");
+    Serial.println(F("Communication with WiFi module failed!"));
     // don't continue
     while (true);
   }
@@ -69,12 +80,12 @@ void setupWifi() {
 
   String fv = WiFi.firmwareVersion();
   if (fv < WIFI_FIRMWARE_LATEST_VERSION) {
-    Serial.println("Please upgrade the firmware");
+    Serial.println(F("Please upgrade the firmware"));
   }
 
   // attempt to connect to WiFi network:
   while (status != WL_CONNECTED) {
-    Serial.print("Attempting to connect to WPA SSID: ");
+    Serial.print(F("Attempting to connect to WPA SSID: "));
     Serial.println(ssid);
     // Connect to WPA/WPA2 network:
 
@@ -85,29 +96,29 @@ void setupWifi() {
     delay(10000);
   }
 
-  Serial.println("Connected to wireless");
+  Serial.println(F("Connected to wireless"));
   printCurrentNet();
   printWifiData();
 }
 
 void setupEthernet() {
-  Serial.println("\nInitialize Ethernet with DHCP:");
+  Serial.println(F("\nInitialize Ethernet with DHCP:"));
   if (Ethernet.begin(mac) == 0) {
-    Serial.println("Failed to configure Ethernet using DHCP");
+    Serial.println(F("Failed to configure Ethernet using DHCP"));
     if (Ethernet.hardwareStatus() == EthernetNoHardware) {
-      Serial.println("Ethernet shield was not found.  Sorry, can't run without hardware. :(");
+      Serial.println(F("Ethernet shield was not found.  Sorry, can't run without hardware. :("));
     } else if (Ethernet.linkStatus() == LinkOFF) {
-      Serial.println("Ethernet cable is not connected.");
+      Serial.println(F("Ethernet cable is not connected."));
     }
     // no point in carrying on, so do nothing forevermore:
     while (true) {
       delay(1);
     }
   }
-  Serial.println("Connected to ethernet!");
-  Serial.print("Ethernet IP address: ");
+  Serial.println(F("Connected to ethernet!"));
+  Serial.print(F("Ethernet IP address: "));
   Serial.println(Ethernet.localIP());
-  Serial.print("Ethernet MAC address: ");
+  Serial.print(F("Ethernet MAC address: "));
   printMacAddress(mac);
 }
 
@@ -116,7 +127,7 @@ void loop() {
   {
     // attempt to connect to WiFi network:
     while (WiFi.status() != WL_CONNECTED) {
-      Serial.print("\nReconnecting to  SSID: ");
+      Serial.print(F("\nReconnecting to  SSID: "));
       Serial.println(ssid);
       // Connect to WPA/WPA2 network:
       WiFi.config(wifiIP, wifiDNS);
@@ -125,8 +136,9 @@ void loop() {
       // wait 10 seconds for connection:
       delay(10000);
     }
-    Serial.println("Connected to wireless");
+    Serial.println(F("Connected to wireless"));
     printWifiData();
+    display_freeram();
   }
 
   // listen for incoming clients
@@ -159,17 +171,17 @@ void loop() {
       // No need to process additional lines of header.
       return;
     } else {
-      Serial.print("\nRequest:");
+      Serial.print(F("\nRequest:"));
       Serial.write(req); // Note: ends with new line.
 
-      Serial.print("Connecting to ");
+      Serial.print(F("Connecting to "));
       Serial.print(serverIP);
-      Serial.print(" ... ");
+      Serial.print(F(" ... "));
     }
 
     // Connection succeeded
     if (eClient.connect(serverIP, 80)) {
-      Serial.print("Connected to ");
+      Serial.print(F("Connected to "));
       Serial.println(eClient.remoteIP());
 
       eClient.print(req);
@@ -177,21 +189,23 @@ void loop() {
       eClient.println("Connection: close");
       eClient.println();
     } else {
-      Serial.println("connection failed");
+      Serial.println(F("connection failed"));
     }
 
-    Serial.print("Waiting for response...");
+    Serial.print(F("Waiting for response..."));
     while (!eClient.available()) {
-      delay(1);
+      delay(10);
     }
 
-    Serial.println("Got response!");
+    Serial.println(F("Got response!"));
     int bytes = 0;
     do {
       // Read response into 1kb buffer and relay to wireless client.
       int len = eClient.available();
-      byte buffer[1024];
-      if (len > 1024) len = 1024;
+      Serial.print(F("Response length:"));
+      Serial.println(len);
+      byte buffer[bufferSize];
+      if (len > bufferSize) len = bufferSize;
       bytes += len;
 
       eClient.read(buffer, len);
@@ -205,42 +219,49 @@ void loop() {
     } while (eClient.available());
     double kbytes = bytes / 1024.0;
     Serial.print(kbytes);
-    Serial.println(" kiB transmitted");
+    Serial.println(F(" kiB transmitted"));
+    display_freeram();
+    requestCount++;
+
+    if (requestCount >= requestsBeforeReset) {
+      Serial.println(F("Resetting after 48 requests\n\n\n"));
+      resetFunc();
+    }
   }
 }
 
 void printWifiData() {
   // Print wifi IP address
   IPAddress ip = WiFi.localIP();
-  Serial.print("Wifi IP Address: ");
+  Serial.print(F("Wifi IP Address: "));
   Serial.println(ip);
 
   // Print wifi MAC address
   byte mac[6];
   WiFi.macAddress(mac);
-  Serial.print("Wifi MAC address: ");
+  Serial.print(F("Wifi MAC address: "));
   printMacAddress(mac);
 }
 
 void printCurrentNet() {
   // Print SSID of the wifi network
-  Serial.print("SSID: ");
+  Serial.print(F("SSID: "));
   Serial.println(WiFi.SSID());
 
   // Print the MAC address of the wireless router/AP
   byte bssid[6];
   WiFi.BSSID(bssid);
-  Serial.print("BSSID: ");
+  Serial.print(F("BSSID: "));
   printMacAddress(bssid);
 
   // Print the received signal strength
   long rssi = WiFi.RSSI();
-  Serial.print("signal strength (RSSI):");
+  Serial.print(F("signal strength (RSSI):"));
   Serial.println(rssi);
 
   // Print the encryption type
   byte encryption = WiFi.encryptionType();
-  Serial.print("Encryption Type:");
+  Serial.print(F("Encryption Type:"));
   Serial.println(encryption, HEX);
   Serial.println();
 }
@@ -249,12 +270,23 @@ void printCurrentNet() {
 void printMacAddress(byte mac[]) {
   for (int i = 5; i >= 0; i--) {
     if (mac[i] < 16) {
-      Serial.print("0");
+      Serial.print(F("0"));
     }
     Serial.print(mac[i], HEX);
     if (i > 0) {
-      Serial.print(":");
+      Serial.print(F(":"));
     }
   }
   Serial.println();
+}
+
+void display_freeram() {
+  Serial.print(F("- SRAM left: "));
+  Serial.println(freeRam());
+}
+
+int freeRam() {
+  extern int __heap_start, *__brkval;
+  int v;
+  return (int)&v - (__brkval == 0 ? (int)&__heap_start : (int) __brkval);
 }
